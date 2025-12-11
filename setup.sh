@@ -19,33 +19,41 @@ echo -e "${GREEN}====================================================${NC}"
 echo ""
 
 # --- 1. Обновление системы ---
-echo -e "${YELLOW}[1/8] Обновление системы и установка пакетов...${NC}"
+echo -e "${YELLOW}[1/9] Обновление системы и установка пакетов...${NC}"
 apt update && apt upgrade -y
-# Установка утилит
 apt install -y sudo ufw fail2ban rsyslog curl wget git nano
 
-# --- 2. Проверка логов (rsyslog) ---
-echo -e "${YELLOW}[2/8] Проверка конфигурации логов...${NC}"
-# В Ubuntu 24.04 auth.log может отсутствовать по умолчанию (используется journald),
-# но fail2ban часто ищет именно файл.
+# --- 2. Отключение IPv6 ---
+echo -e "${YELLOW}[2/9] Настройка IPv6...${NC}"
+read -p "Отключить IPv6 (рекомендуется для корректной работы Xray/VPN)? (y/n): " disable_ipv6_choice
+if [[ "$disable_ipv6_choice" =~ ^[Yy]$ ]]; then
+    # Добавляем настройки в sysctl.conf, если их там нет
+    if ! grep -q "net.ipv6.conf.all.disable_ipv6 = 1" /etc/sysctl.conf; then
+        echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
+        echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf
+        echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> /etc/sysctl.conf
+        sysctl -p
+        echo -e "${GREEN}IPv6 отключен системно.${NC}"
+    else
+        echo -e "${GREEN}IPv6 уже отключен.${NC}"
+    fi
+fi
+
+# --- 3. Проверка логов (rsyslog) ---
+echo -e "${YELLOW}[3/9] Проверка конфигурации логов...${NC}"
 if [ ! -f /var/log/auth.log ]; then
     echo -e "Файл auth.log не найден. Настраиваем rsyslog..."
     systemctl enable rsyslog
     systemctl start rsyslog
-    # Ждем пару секунд, чтобы файл создался
     sleep 2
-    if [ -f /var/log/auth.log ]; then
-        echo -e "${GREEN}Log файл создан успешно.${NC}"
-    else
-        echo -e "${RED}Не удалось создать auth.log, но продолжим.${NC}"
-    fi
 else
     echo -e "${GREEN}Log файл auth.log на месте.${NC}"
 fi
 
-# --- 3. Создание пользователя ---
-echo -e "${YELLOW}[3/8] Настройка нового пользователя...${NC}"
+# --- 4. Создание пользователя ---
+echo -e "${YELLOW}[4/9] Настройка нового пользователя...${NC}"
 read -p "Хотите создать нового sudo-пользователя? (y/n): " create_user_choice
+FINAL_USER="root" # По умолчанию пользователь root
 
 if [[ "$create_user_choice" =~ ^[Yy]$ ]]; then
     while true; do
@@ -59,17 +67,20 @@ if [[ "$create_user_choice" =~ ^[Yy]$ ]]; then
 
     if id "$NEW_USER" &>/dev/null; then
         echo -e "${YELLOW}Пользователь $NEW_USER уже существует.${NC}"
+        FINAL_USER="$NEW_USER"
     else
-        adduser "$NEW_USER"
+        # --gecos "" пропускает вопросы про имя, телефон и т.д.
+        adduser --gecos "" "$NEW_USER"
         usermod -aG sudo "$NEW_USER"
+        FINAL_USER="$NEW_USER"
         echo -e "${GREEN}Пользователь $NEW_USER создан и добавлен в группу sudo.${NC}"
     fi
 else
     echo "Пропускаем создание пользователя."
 fi
 
-# --- 4. Настройка SSH ---
-echo -e "${YELLOW}[4/8] Настройка безопасности SSH...${NC}"
+# --- 5. Настройка SSH ---
+echo -e "${YELLOW}[5/9] Настройка безопасности SSH...${NC}"
 SSH_CONFIG="/etc/ssh/sshd_config"
 cp $SSH_CONFIG "$SSH_CONFIG.bak"
 
@@ -97,50 +108,52 @@ read -p "Отключить вход по root через SSH? (Рекоменд
 if [[ "$disable_root_choice" =~ ^[Yy]$ ]]; then
     sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' $SSH_CONFIG
     sed -i 's/PermitRootLogin yes/PermitRootLogin no/' $SSH_CONFIG
-    # На случай если там было prohibit-password
     sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin no/' $SSH_CONFIG
     echo -e "${GREEN}Вход root отключен.${NC}"
 fi
 
-# --- 5. Настройка Firewall (UFW) ---
-echo -e "${YELLOW}[5/8] Настройка UFW (Firewall)...${NC}"
+# --- 6. Настройка Firewall (UFW) ---
+echo -e "${YELLOW}[6/9] Настройка UFW (Firewall)...${NC}"
 
-# Сброс правил
 ufw default deny incoming
 ufw default allow outgoing
 
-# Разрешаем SSH (на новом или старом порту)
+# Основные порты
 ufw allow $SSH_PORT/tcp
-echo -e "Разрешен порт SSH: $SSH_PORT"
-
-# Разрешаем HTTP/HTTPS
 ufw allow 80/tcp
 ufw allow 443/tcp
-echo -e "Разрешены порты HTTP (80) и HTTPS (443)"
-
-# Разрешаем порт для подписки 3x-ui
 ufw allow 2096/tcp
-echo -e "Разрешен порт подписки (2096)"
+echo -e "Разрешены: SSH ($SSH_PORT), HTTP (80), HTTPS (443), Sub (2096)"
 
-# Спрашиваем про порт панели 3x-ui
+# External Proxy Port
+read -p "Хотите открыть порт для External Proxy? (y/n): " ext_proxy_choice
+if [[ "$ext_proxy_choice" =~ ^[Yy]$ ]]; then
+     while true; do
+        read -p "Введите порт для External Proxy: " EXT_PORT
+        if [[ "$EXT_PORT" =~ ^[0-9]+$ ]] && [ "$EXT_PORT" -ge 1024 ] && [ "$EXT_PORT" -le 65535 ]; then
+            ufw allow $EXT_PORT/tcp
+            echo -e "${GREEN}Порт External Proxy ($EXT_PORT) разрешен.${NC}"
+            break
+        else
+            echo -e "${RED}Неверный порт.${NC}"
+        fi
+    done
+fi
+
+# 3x-ui Panel Port
 read -p "Введите порт, на котором будет висеть панель 3x-ui (по умолчанию 2053): " PANEL_PORT
 PANEL_PORT=${PANEL_PORT:-2053}
 if [[ "$PANEL_PORT" =~ ^[0-9]+$ ]]; then
     ufw allow $PANEL_PORT/tcp
     echo -e "Разрешен порт панели: $PANEL_PORT"
-else
-    echo -e "${RED}Порт введен неверно, правило не добавлено.${NC}"
 fi
 
-# Включение UFW
 echo "y" | ufw enable
 echo -e "${GREEN}UFW активирован.${NC}"
 
-# --- 6. Настройка Fail2Ban ---
-echo -e "${YELLOW}[6/8] Настройка Fail2Ban для защиты SSH...${NC}"
+# --- 7. Настройка Fail2Ban ---
+echo -e "${YELLOW}[7/9] Настройка Fail2Ban...${NC}"
 cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-
-# Создаем конфигурацию для sshd
 cat > /etc/fail2ban/jail.d/sshd.local <<EOF
 [sshd]
 enabled = true
@@ -152,38 +165,29 @@ bantime = 3600
 findtime = 600
 backend = auto
 EOF
-
 systemctl restart fail2ban
-echo -e "${GREEN}Fail2Ban настроен и перезапущен.${NC}"
 
-# --- 7. Установка 3x-ui ---
-echo -e "${YELLOW}[7/8] Установка панели 3x-ui...${NC}"
+# --- 8. Установка 3x-ui ---
+echo -e "${YELLOW}[8/9] Установка панели 3x-ui...${NC}"
 read -p "Хотите установить панель 3x-ui (MHSanaei fork)? (y/n): " install_3xui
-
 if [[ "$install_3xui" =~ ^[Yy]$ ]]; then
-    echo -e "Запускаем установщик 3x-ui..."
-    echo -e "${YELLOW}ВАЖНО: При установке укажите порт панели $PANEL_PORT, который мы открыли в UFW!${NC}"
-    sleep 3
+    echo -e "${YELLOW}ВАЖНО: При установке укажите порт панели $PANEL_PORT !${NC}"
+    sleep 2
     bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-else
-    echo "Установка 3x-ui пропущена."
 fi
 
-# --- 8. Финал ---
-echo -e "${YELLOW}[8/8] Применение изменений...${NC}"
+# --- 9. Финал ---
+echo -e "${YELLOW}[9/9] Применение изменений...${NC}"
 systemctl restart ssh
+
+# Получение внешнего IP
+SERVER_IP=$(curl -s -4 ifconfig.me)
 
 echo -e "${GREEN}====================================================${NC}"
 echo -e "${GREEN}   Настройка завершена!                             ${NC}"
 echo -e "${GREEN}====================================================${NC}"
-echo -e "1. SSH порт: ${YELLOW}$SSH_PORT${NC}"
-if [[ "$create_user_choice" =~ ^[Yy]$ ]]; then
-    echo -e "2. Пользователь: ${YELLOW}$NEW_USER${NC}"
-fi
-echo -e "3. Firewall: ${YELLOW}Активен${NC}"
-echo -e "4. Fail2Ban: ${YELLOW}Активен${NC}"
 echo ""
-echo -e "${RED}ВАЖНО:${NC} Не закрывайте текущую сессию SSH!"
-echo -e "Откройте новое окно терминала и попробуйте подключиться:"
-echo -e "ssh -p $SSH_PORT <user>@<ip-address>"
-echo -e "Если подключение успешно, можно закрывать эту сессию."
+echo -e "Для подключения используйте команду:"
+echo -e "${YELLOW}ssh -p $SSH_PORT $FINAL_USER@$SERVER_IP${NC}"
+echo ""
+echo -e "${RED}ВАЖНО:${NC} Не закрывайте текущую сессию SSH, пока не проверите вход в новом окне!"
