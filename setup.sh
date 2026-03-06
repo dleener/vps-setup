@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Скрипт базовой настройки безопасности VPS на Ubuntu 24.04
-# GitHub:[Ваш_Ник/Ваш_Репозиторий]
+# GitHub: [Ваш_Ник/Ваш_Репозиторий]
 # ==============================================================================
 
 set -e # Остановка скрипта при ошибках
@@ -12,7 +12,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m' # Без цвета
 
 info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
@@ -21,7 +21,7 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; }
 prompt() { echo -n -e "${YELLOW}[PROMPT]${NC} $1"; }
 
 # --- Проверка прав root ---
-if[ "$EUID" -ne 0 ]; then
+if [ "$EUID" -ne 0 ]; then
   error "Пожалуйста, запустите этот скрипт от имени root (sudo -i или sudo ./script.sh)."
   exit 1
 fi
@@ -57,12 +57,12 @@ info "Настройка SSH..."
 
 # Запрос нового порта
 while true; do
-    prompt "Введите новый порт для SSH (от 1024 до 65535) [по умолчанию 22]: "
+    prompt "Введите новый порт для SSH (от 1024 до 65535)[по умолчанию 22]: "
     read -r SSH_PORT
     SSH_PORT=${SSH_PORT:-22}
-    if [[ "$SSH_PORT" =~ ^[0-9]+$ ]] &&[ "$SSH_PORT" -ge 1024 ] && [ "$SSH_PORT" -le 65535 ]; then
+    if [[ "$SSH_PORT" =~ ^[0-9]+$ ]] &&[ "$SSH_PORT" -ge 1024 ] &&[ "$SSH_PORT" -le 65535 ]; then
         break
-    elif[ "$SSH_PORT" -eq 22 ]; then
+    elif [ "$SSH_PORT" -eq 22 ]; then
         break
     else
         error "Пожалуйста, введите корректный номер порта."
@@ -123,7 +123,7 @@ success "Порт $SSH_PORT/tcp (SSH) добавлен в исключения U
 prompt "Введите дополнительные порты, которые нужно открыть, через пробел (например: 80 443). Если не нужно - нажмите Enter: "
 read -r EXTRA_PORTS
 
-if[ -n "$EXTRA_PORTS" ]; then
+if [ -n "$EXTRA_PORTS" ]; then
     for port in $EXTRA_PORTS; do
         ufw allow "$port"
         success "Порт $port открыт."
