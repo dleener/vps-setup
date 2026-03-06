@@ -4,9 +4,9 @@
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/dleener/vps-setup/refs/heads/main/setup.sh)
+```
 
-
-# Базовая настройка безопасности VPS на Ubuntu 24.04
+Базовая настройка безопасности VPS на Ubuntu 24.04
 
 Интерактивный Bash-скрипт для быстрой и безопасной настройки нового VPS сервера на базе Ubuntu 24.04 LTS. Скрипт автоматизирует рутинные процессы укрепления (hardening) системы.
 
