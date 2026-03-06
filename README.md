@@ -29,8 +29,3 @@ bash <(curl -Ls https://raw.githubusercontent.com/dleener/vps-setup/refs/heads/m
 1. **Подключитесь к вашему серверу** по SSH (с правами root или используйте `sudo -i`).
 2. **Убедитесь, что ваш SSH-ключ добавлен** в `~/.ssh/authorized_keys`, иначе после выполнения скрипта вы не сможете войти на сервер!
 3. **Скачайте и запустите скрипт**:
-
-```bash
-wget https://raw.githubusercontent.com/ВАШ_НИК/ВАШ_РЕПОЗИТОРИЙ/main/ubuntu_secure.sh
-chmod +x ubuntu_secure.sh
-sudo ./ubuntu_secure.sh
