@@ -39,9 +39,9 @@ hr() { printf "%b─────────────────────
 title() {
     local n="$1" text="$2"
     clear 2>/dev/null || true
-    printf "%b╭──────────────────────────────────────────────────────────╮%b\n" "$CYAN" "$RESET"
-    printf "%b│%b  %b%-56s%b%b│%b\n" "$CYAN" "$RESET" "$BOLD" "$text" "$RESET" "$CYAN" "$RESET"
-    printf "%b╰──────────────────────────────────────────────────────────╯%b\n\n" "$CYAN" "$RESET"
+    printf "%b╭────────────────────────────────────────────────────────────╮%b\n" "$CYAN" "$RESET"
+    printf "%b│%b  %b%-58s%b│%b\n" "$CYAN" "$RESET" "$BOLD" "$text" "$RESET" "$CYAN" "$RESET"
+    printf "%b╰────────────────────────────────────────────────────────────╯%b\n\n" "$CYAN" "$RESET"
     printf "%b[%s/7]%b %b%s%b\n\n" "$BLUE" "$n" "$RESET" "$BOLD" "$text" "$RESET"
 }
 
@@ -93,13 +93,13 @@ server_ip() {
 
 show_intro() {
     clear 2>/dev/null || true
-    printf "%b╭──────────────────────────────────────────────────────────╮%b\n" "$CYAN" "$RESET"
-    printf "%b│%b                                                          %b│%b\n" "$CYAN" "$RESET" "$CYAN" "$RESET"
-    printf "%b│%b              %bVPS SECURITY SETUP%b                       %b│%b\n" "$CYAN" "$RESET" "$BOLD$WHITE" "$RESET" "$CYAN" "$RESET"
-    printf "%b│%b              Ubuntu 22.04 / 24.04                        %b│%b\n" "$CYAN" "$RESET" "$CYAN" "$RESET"
-    printf "%b│%b              %bby dleen%b                                  %b│%b\n" "$CYAN" "$RESET" "$DIM" "$RESET" "$CYAN" "$RESET"
-    printf "%b│%b                                                          %b│%b\n" "$CYAN" "$RESET" "$CYAN" "$RESET"
-    printf "%b╰──────────────────────────────────────────────────────────╯%b\n\n" "$CYAN" "$RESET"
+    printf "%b╭────────────────────────────────────────────────────────────╮%b\n" "$CYAN" "$RESET"
+    printf "%b│%b                                                            %b│%b\n" "$CYAN" "$RESET" "$CYAN" "$RESET"
+    printf "%b│%b              %bVPS SECURITY SETUP%b                         %b│%b\n" "$CYAN" "$RESET" "$BOLD$WHITE" "$RESET" "$CYAN" "$RESET"
+    printf "%b│%b              Ubuntu 22.04 / 24.04                          %b│%b\n" "$CYAN" "$RESET" "$CYAN" "$RESET"
+    printf "%b│%b              %bby dleen%b                                    %b│%b\n" "$CYAN" "$RESET" "$DIM" "$RESET" "$CYAN" "$RESET"
+    printf "%b│%b                                                            %b│%b\n" "$CYAN" "$RESET" "$CYAN" "$RESET"
+    printf "%b╰────────────────────────────────────────────────────────────╯%b\n\n" "$CYAN" "$RESET"
 
     printf "%bЭтот мастер выполнит базовую защиту VPS:%b\n\n" "$BOLD" "$RESET"
     printf "  %b✓%b Обновление системы\n" "$GREEN" "$RESET"
@@ -116,6 +116,7 @@ show_intro() {
     printf "  IP       %s\n" "$(server_ip || echo unknown)"
     printf "\n%bВнимание:%b не закрывайте текущую SSH-сессию до успешной проверки нового подключения.\n" "$YELLOW" "$RESET"
     printf "\n"
+    ask_yes_no "Начать настройку?" y || exit 0
     ask_yes_no "Начать настройку?" y || exit 0
 }
 
@@ -161,7 +162,7 @@ EOF
 
 step_ssh() {
     title "3" "SSH"
-    local current_port="$2"
+    local current_port="$1"
     local new_port answer disable_pass key_count
     local current_keys=0
 
