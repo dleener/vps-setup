@@ -24,7 +24,7 @@ Enter) и объясняет, что именно делает перед каж
 
 ```bash
 wget https://raw.githubusercontent.com/dleener/vps-setup/main/setup.sh
-sudo bash vps-setup.sh
+sudo bash setup.sh
 ```
 
 Скрипт нужно запускать **от root** (или через `sudo`) на только что
