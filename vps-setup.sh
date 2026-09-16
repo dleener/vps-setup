@@ -267,7 +267,11 @@ EOF
 SSH_NEW_PORT=""
 SSH_USES_SOCKET=0
 SSH_CURRENT_PORT="22"
-SSHD_DROPIN="/etc/ssh/sshd_config.d/99-vps-setup.conf"
+# Порт и вход-по-паролю сознательно лежат в РАЗНЫХ файлах: если бы они были
+# в одном файле, повторный запуск скрипта (шаг A перезаписывает файл целиком)
+# случайно стирал бы уже сделанный выбор по паролю, и наоборот.
+SSHD_PORT_DROPIN="/etc/ssh/sshd_config.d/99-vps-setup-port.conf"
+SSHD_AUTH_DROPIN="/etc/ssh/sshd_config.d/99-vps-setup-auth.conf"
 
 get_current_ssh_port() {
     local p
@@ -288,6 +292,35 @@ ssh_socket_active() {
         fi
     fi
     return 1
+}
+
+ipv6_is_disabled() {
+    # Возвращает 0, если IPv6 отключён в ядре (в т.ч. если сам этот скрипт
+    # отключил его на шаге 2) — тогда сокет ssh.socket нельзя привязывать
+    # к двойному стеку "::", иначе соединения будут устанавливаться,
+    # но тут же обрываться.
+    local v
+    if [ ! -e /proc/sys/net/ipv6 ]; then
+        return 0
+    fi
+    v=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "0")
+    [ "$v" = "1" ]
+}
+
+write_ssh_socket_override() {
+    # Пишет override для ssh.socket, слушая порт явно на IPv4 (и на IPv6,
+    # только если IPv6 в ядре не отключён — иначе двойной стек "::"
+    # ломает реальные подключения, хотя bind() при этом не выдаёт ошибку).
+    local port="$1"
+    mkdir -p /etc/systemd/system/ssh.socket.d
+    {
+        echo "[Socket]"
+        echo "ListenStream="
+        echo "ListenStream=0.0.0.0:${port}"
+        if ! ipv6_is_disabled; then
+            echo "ListenStream=[::]:${port}"
+        fi
+    } > /etc/systemd/system/ssh.socket.d/override.conf
 }
 
 ensure_sshd_config_include() {
@@ -340,9 +373,9 @@ EOF
                 error "Некорректный порт. Введите число от 1 до 65535."
                 continue
             fi
-            if [ "$new_port" -eq 22 ]; then
-                warn "Порт 22 — это порт по умолчанию, менять его на самого себя нет смысла."
-                if confirm "Всё равно оставить 22?" "n"; then break; else continue; fi
+            if [ "$new_port" = "$SSH_CURRENT_PORT" ]; then
+                warn "Это и есть текущий порт SSH, менять его на самого себя нет смысла."
+                if confirm "Всё равно оставить ${new_port}?" "n"; then break; else continue; fi
             fi
             if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${new_port}\$"; then
                 warn "Похоже, порт ${new_port} уже кем-то занят на этом сервере."
@@ -355,24 +388,19 @@ EOF
         ensure_sshd_config_include
         cp -a /etc/ssh/sshd_config "/etc/ssh/sshd_config.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null
 
-        cat > "$SSHD_DROPIN" <<EOF
+        cat > "$SSHD_PORT_DROPIN" <<EOF
 # Создано vps-setup.sh — не редактируйте вручную, используйте новый запуск скрипта
 Port ${SSH_NEW_PORT}
 EOF
 
         if [ "$SSH_USES_SOCKET" -eq 1 ]; then
-            mkdir -p /etc/systemd/system/ssh.socket.d
-            cat > /etc/systemd/system/ssh.socket.d/override.conf <<EOF
-[Socket]
-ListenStream=
-ListenStream=${SSH_NEW_PORT}
-EOF
+            write_ssh_socket_override "$SSH_NEW_PORT"
             info "Настроена socket-активация (ssh.socket) на новый порт."
         fi
 
         if ! sshd -t 2>>"$LOG_FILE"; then
             error "Конфигурация SSH содержит ошибку! Изменения порта отменены."
-            rm -f "$SSHD_DROPIN"
+            rm -f "$SSHD_PORT_DROPIN"
             rm -f /etc/systemd/system/ssh.socket.d/override.conf
             SSH_NEW_PORT=""
         else
@@ -413,7 +441,7 @@ EOF
                 fi
             else
                 error "Откатываю изменения порта SSH, чтобы не потерять доступ к серверу."
-                rm -f "$SSHD_DROPIN"
+                rm -f "$SSHD_PORT_DROPIN"
                 rm -f /etc/systemd/system/ssh.socket.d/override.conf
                 systemctl daemon-reload
                 if [ "$SSH_USES_SOCKET" -eq 1 ]; then
@@ -457,7 +485,8 @@ EOF
             confirm "Вы ТОЧНО уверены? Это может заблокировать вам доступ!" "n" || { info "Отключение пароля пропущено."; return; }
         fi
         ensure_sshd_config_include
-        cat >> "$SSHD_DROPIN" <<EOF
+        cat > "$SSHD_AUTH_DROPIN" <<EOF
+# Создано vps-setup.sh — не редактируйте вручную, используйте новый запуск скрипта
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
@@ -473,9 +502,19 @@ EOF
             warn "Проверьте в НОВОМ окне терминала, что вход по ключу всё ещё работает,"
             warn "прежде чем закрывать текущую сессию!"
             pause
+            if ! confirm "Вход по ключу точно сработал в новом окне?" "y"; then
+                error "Откатываю отключение пароля, чтобы не потерять доступ к серверу."
+                rm -f "$SSHD_AUTH_DROPIN"
+                if [ "$SSH_USES_SOCKET" -eq 1 ]; then
+                    systemctl restart ssh.socket
+                else
+                    systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service 2>/dev/null
+                fi
+                warn "Вход по паролю снова включён."
+            fi
         else
             error "Ошибка в конфигурации SSH. Отключение пароля отменено."
-            sed -i '/PasswordAuthentication no/d;/KbdInteractiveAuthentication no/d;/ChallengeResponseAuthentication no/d' "$SSHD_DROPIN"
+            rm -f "$SSHD_AUTH_DROPIN"
         fi
     else
         info "Вход по паролю оставлен включённым."
