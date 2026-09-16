@@ -23,8 +23,8 @@ Enter) и объясняет, что именно делает перед каж
 ## Как использовать
 
 ```bash
-wget https://raw.githubusercontent.com/dleener/vps-setup/main/setup.sh
-sudo bash setup.sh
+wget https://raw.githubusercontent.com/dleener/vps-setup/main/vps-setup.sh
+sudo bash vps-setup.sh
 ```
 
 Скрипт нужно запускать **от root** (или через `sudo`) на только что
