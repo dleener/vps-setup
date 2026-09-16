@@ -128,6 +128,33 @@ if [ -f /etc/os-release ]; then
     OS_VERSION="${VERSION_ID:-unknown}"
 fi
 
+# --- Определение внешнего IP-адреса сервера --------------------------------
+# Нужен, чтобы подставлять его в примеры команд (ssh, ssh-copy-id) вместо
+# плейсхолдера — так их можно скопировать и сразу выполнить без правок.
+
+detect_server_ip() {
+    local ip=""
+    # Сначала пробуем узнать реальный внешний IP через интернет-сервис —
+    # это надёжнее всего для VPS за NAT/с несколькими интерфейсами.
+    if command -v curl >/dev/null 2>&1; then
+        ip=$(curl -s -4 --max-time 3 https://icanhazip.com 2>/dev/null | tr -d '[:space:]')
+        if [ -z "$ip" ]; then
+            ip=$(curl -s -4 --max-time 3 https://ifconfig.me 2>/dev/null | tr -d '[:space:]')
+        fi
+    fi
+    # Если интернета нет или curl недоступен — берём локальный адрес
+    # исходящего интерфейса.
+    if [ -z "$ip" ]; then
+        ip=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}')
+    fi
+    if [ -z "$ip" ]; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    echo "$ip"
+}
+
+SERVER_IP="$(detect_server_ip)"
+
 # --- Приветствие ------------------------------------------------------------
 
 clear 2>/dev/null || true
@@ -154,6 +181,14 @@ if [[ "$OS_ID" != "ubuntu" && "$OS_ID" != "debian" ]]; then
     warn "Скрипт рассчитан на Ubuntu/Debian. Обнаружена другая система (${OS_ID})."
     confirm "Всё равно продолжить на свой страх и риск?" "n" || exit 0
 fi
+
+echo
+if [ -n "$SERVER_IP" ]; then
+    info "Определён внешний IP-адрес сервера: ${SERVER_IP}"
+else
+    warn "Не удалось автоматически определить IP-адрес сервера."
+fi
+SERVER_IP=$(ask_value "IP-адрес сервера (для примеров команд подключения)" "${SERVER_IP:-<IP-адрес-сервера>}")
 
 echo
 confirm "Начать настройку сервера?" "y" || { echo "Отменено пользователем."; exit 0; }
@@ -363,7 +398,7 @@ EOF
 
             echo
             warn "ОСТАНОВИТЕСЬ. Откройте НОВОЕ окно терминала и проверьте вход:"
-            printf "${C_BOLD}    ssh -p %s %s@<IP-адрес-сервера>${C_RESET}\n" "$SSH_NEW_PORT" "${SUDO_USER:-root}"
+            printf "${C_BOLD}    ssh -p %s %s@%s${C_RESET}\n" "$SSH_NEW_PORT" "${SUDO_USER:-root}" "$SERVER_IP"
             echo
             echo "Не закрывайте текущую сессию, пока не убедитесь, что новая работает!"
             pause
@@ -412,7 +447,7 @@ EOF
         warn "Если отключить пароль сейчас, вы можете потерять доступ к серверу!"
         echo
         echo "Сначала на СВОЁМ компьютере выполните (в новом окне терминала):"
-        printf "${C_BOLD}    ssh-copy-id -p %s %s@<IP-адрес-сервера>${C_RESET}\n" "${SSH_NEW_PORT:-22}" "$target_user"
+        printf "${C_BOLD}    ssh-copy-id -p %s %s@%s${C_RESET}\n" "${SSH_NEW_PORT:-22}" "$target_user" "$SERVER_IP"
         echo "и только потом отключайте вход по паролю."
     fi
 
