@@ -50,12 +50,35 @@ log() {
 
 line() { printf '%s\n' "────────────────────────────────────────────────────────────────────"; }
 
+# Анимации и очистку экрана включаем только в настоящем терминале —
+# при выводе в файл или через pipe управляющие последовательности только мешают.
+if [ -t 1 ]; then ANIMATE=1; else ANIMATE=0; fi
+
+# type_out "текст" задержка [символов_за_раз] — печатает текст «как на
+# печатной машинке». Без анимации просто выводит его целиком.
+type_out() {
+    local text="$1" delay="$2" chunk="${3:-1}" i
+    if [ "$ANIMATE" -eq 0 ]; then
+        printf '%s\n' "$text"
+        return
+    fi
+    for ((i = 0; i < ${#text}; i += chunk)); do
+        printf '%s' "${text:i:chunk}"
+        sleep "$delay"
+    done
+    printf '\n'
+}
+
+# Каждый новый этап начинается с чистого экрана. Используем \033[H\033[2J,
+# а не clear: clear в Ubuntu стирает ещё и историю прокрутки терминала,
+# а так предыдущие шаги можно посмотреть, прокрутив окно вверх.
 header() {
+    if [ "$ANIMATE" -eq 1 ]; then printf '\033[H\033[2J'; fi
     echo
     printf '%b' "${C_BOLD}${C_BLUE}"
-    line
-    printf "  %s\n" "$1"
-    line
+    type_out "$(line)" 0.005 4
+    type_out "  $1" 0.015
+    type_out "$(line)" 0.005 4
     printf '%b' "${C_RESET}"
     log "=== $1 ==="
 }
@@ -109,6 +132,50 @@ abort() {
     exit 1
 }
 
+# --- Спиннер для долгих команд ------------------------------------------
+
+SPINNER_PID=""
+
+spinner_loop() {
+    local msg="$1" start=$SECONDS i=0
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    while true; do
+        printf "\r${C_CYAN}%s${C_RESET} %s ${C_BOLD}%ds${C_RESET}" \
+            "${frames[i++ % ${#frames[@]}]}" "$msg" $((SECONDS - start))
+        sleep 0.1
+    done
+}
+
+# run_with_spinner "Текст" команда [аргументы...]
+# Вывод команды уходит в журнал, а на экране крутится спиннер с таймером.
+# Команда работает на переднем плане, поэтому Ctrl+C прерывает именно её.
+run_with_spinner() {
+    local msg="$1" rc
+    shift
+    log "RUN: $*"
+    if [ "$ANIMATE" -eq 0 ]; then
+        "$@" >>"$LOG_FILE" 2>&1 </dev/null
+        return
+    fi
+    printf '\033[?25l'
+    spinner_loop "$msg" &
+    SPINNER_PID=$!
+    "$@" >>"$LOG_FILE" 2>&1 </dev/null
+    rc=$?
+    kill "$SPINNER_PID" 2>/dev/null
+    wait "$SPINNER_PID" 2>/dev/null
+    SPINNER_PID=""
+    printf '\r\033[K\033[?25h'
+    return $rc
+}
+
+# Если скрипт прервали посреди спиннера — останавливаем его и возвращаем курсор.
+cleanup() {
+    if [ -n "$SPINNER_PID" ]; then kill "$SPINNER_PID" 2>/dev/null; fi
+    if [ "$ANIMATE" -eq 1 ]; then printf '\033[?25h'; fi
+}
+trap cleanup EXIT
+
 # --- Проверка прав root -------------------------------------------------
 
 if [[ $EUID -ne 0 ]]; then
@@ -157,7 +224,6 @@ SERVER_IP="$(detect_server_ip)"
 
 # --- Приветствие ------------------------------------------------------------
 
-clear 2>/dev/null || true
 header "Базовая настройка VPS"
 
 cat <<EOF
@@ -208,16 +274,23 @@ step1_update_system() {
     confirm "Выполнить обновление системы сейчас?" "y" || { info "Шаг 1 пропущен."; return; }
 
     step_title "Обновление списка пакетов (apt-get update)"
-    if ! DEBIAN_FRONTEND=noninteractive apt-get update -y; then
+    if ! run_with_spinner "Загружаем списки пакетов..." \
+            env DEBIAN_FRONTEND=noninteractive apt-get update -y; then
         warn "apt-get update завершился с ошибкой. Проверьте подключение к интернету и репозитории."
+        info "Подробности — в журнале: ${LOG_FILE}"
         confirm "Продолжить, несмотря на ошибку?" "n" || abort "Остановлено на шаге обновления."
     else
         success "Список пакетов обновлён."
     fi
 
     step_title "Обновление установленных пакетов (apt-get upgrade)"
-    if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; then
+    # Вывод apt скрыт за спиннером, поэтому вопросы dpkg про изменённые
+    # конфиги решаем заранее: оставляем ваши текущие файлы настроек.
+    if ! run_with_spinner "Устанавливаем обновления, это может занять несколько минут..." \
+            env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold; then
         warn "apt-get upgrade завершился с ошибкой."
+        info "Подробности — в журнале: ${LOG_FILE}"
         confirm "Продолжить настройку дальше?" "y" || abort "Остановлено пользователем после ошибки upgrade."
     else
         success "Система обновлена."
@@ -544,7 +617,7 @@ EOF
 
     if ! command -v ufw >/dev/null 2>&1; then
         step_title "Установка UFW"
-        if DEBIAN_FRONTEND=noninteractive apt-get install -y ufw >>"$LOG_FILE" 2>&1; then
+        if run_with_spinner "Устанавливаем UFW..." env DEBIAN_FRONTEND=noninteractive apt-get install -y ufw; then
             success "UFW установлен."
         else
             abort "Не удалось установить UFW."
@@ -610,7 +683,7 @@ EOF
 
     if ! command -v fail2ban-server >/dev/null 2>&1; then
         step_title "Установка Fail2Ban"
-        if DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban >>"$LOG_FILE" 2>&1; then
+        if run_with_spinner "Устанавливаем Fail2Ban..." env DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban; then
             success "Fail2Ban установлен."
         else
             abort "Не удалось установить Fail2Ban."
@@ -700,6 +773,7 @@ main() {
     step4_setup_firewall
     pause
     step5_setup_fail2ban
+    pause
     print_summary
 }
 
