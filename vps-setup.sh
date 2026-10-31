@@ -311,6 +311,10 @@ write_ssh_socket_override() {
     # Пишет override для ssh.socket, слушая порт явно на IPv4 (и на IPv6,
     # только если IPv6 в ядре не отключён — иначе двойной стек "::"
     # ломает реальные подключения, хотя bind() при этом не выдаёт ошибку).
+    # BindIPv6Only=ipv6-only обязателен: без него "[::]" по умолчанию
+    # dual-stack и пытается занять тот же порт на IPv4, который уже занят
+    # строкой 0.0.0.0 — bind() падает с "Address already in use",
+    # и ssh.socket не стартует.
     local port="$1"
     mkdir -p /etc/systemd/system/ssh.socket.d
     {
@@ -318,6 +322,7 @@ write_ssh_socket_override() {
         echo "ListenStream="
         echo "ListenStream=0.0.0.0:${port}"
         if ! ipv6_is_disabled; then
+            echo "BindIPv6Only=ipv6-only"
             echo "ListenStream=[::]:${port}"
         fi
     } > /etc/systemd/system/ssh.socket.d/override.conf
