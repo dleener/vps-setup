@@ -23,7 +23,7 @@ Enter) и объясняет, что именно делает перед каж
 ## Как использовать
 
 ```bash
-wget https://raw.githubusercontent.com/dleener/vps-setup/main/vps-setup.sh
+wget -O vps-setup.sh https://raw.githubusercontent.com/dleener/vps-setup/main/vps-setup.sh
 sudo bash vps-setup.sh
 ```
 
