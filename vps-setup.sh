@@ -343,8 +343,12 @@ SSH_CURRENT_PORT="22"
 # Порт и вход-по-паролю сознательно лежат в РАЗНЫХ файлах: если бы они были
 # в одном файле, повторный запуск скрипта (шаг A перезаписывает файл целиком)
 # случайно стирал бы уже сделанный выбор по паролю, и наоборот.
+# Файл с паролем назван 01-…: sshd берёт ПЕРВОЕ значение параметра, а файлы
+# читает по алфавиту, поэтому 50-cloud-init.conf с «PasswordAuthentication yes»
+# (его кладут многие хостеры) перебил бы файл 99-…
 SSHD_PORT_DROPIN="/etc/ssh/sshd_config.d/99-vps-setup-port.conf"
-SSHD_AUTH_DROPIN="/etc/ssh/sshd_config.d/99-vps-setup-auth.conf"
+SSHD_AUTH_DROPIN="/etc/ssh/sshd_config.d/01-vps-setup-auth.conf"
+SSHD_AUTH_DROPIN_OLD="/etc/ssh/sshd_config.d/99-vps-setup-auth.conf"
 
 get_current_ssh_port() {
     local p
@@ -569,7 +573,13 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
 EOF
+        # Файл от старых версий скрипта больше не нужен
+        rm -f "$SSHD_AUTH_DROPIN_OLD"
         if sshd -t 2>>"$LOG_FILE"; then
+            if sshd -T 2>/dev/null | grep -qi '^passwordauthentication yes'; then
+                warn "Вход по паролю всё ещё включён: его разрешает другой файл в /etc/ssh/sshd_config.d или sshd_config."
+                warn "Проверьте: grep -ri PasswordAuthentication /etc/ssh/sshd_config /etc/ssh/sshd_config.d/"
+            fi
             if [ "$SSH_USES_SOCKET" -eq 1 ]; then
                 systemctl restart ssh.socket
             else
